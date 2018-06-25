@@ -1,0 +1,7 @@
+venv
+*.pyc
+*.env
+data/
+.ipynb_checkpoints/
+*.ipynb
+*.log
