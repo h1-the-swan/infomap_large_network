@@ -102,3 +102,29 @@ def convert_dataframe_to_pajek_and_run_infomap(df, column_names=['Paper_ID', 'Pa
     logger.debug("running infomap...")
     run_infomap(outfname, path_to_infomap, outdir, infomap_args, logfname)
     logger.debug("ran infomap in {}".format(format_timespan(timer()-start)))
+
+def split_pajek(pjk_fname):
+    pjk_fname = os.path.abspath(pjk_fname)
+    outfname_vertices = "{}_vertices.txt".format(os.path.splitext(pjk_fname)[0])
+    outfname_edges = "{}_edges.txt".format(os.path.splitext(pjk_fname)[0])
+    outf_vertices = open(outfname_vertices, 'w')
+    outf_edges = open(outfname_edges, 'w')
+    with open(pjk_fname, 'r') as f:
+        mode = ""
+        for line in f:
+            if line:
+                if line[0] == "*":
+                    if line.lower().startswith('*v'):
+                        mode = 'v'
+                    else:
+                        mode = 'e'
+                    continue
+
+                if mode == 'v':
+                    outf_vertices.write(line)
+                if mode == 'e':
+                    outf_edges.write(line)
+
+    outf_vertices.close()
+    outf_edges.close()
+
