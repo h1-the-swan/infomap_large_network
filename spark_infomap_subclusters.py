@@ -71,7 +71,7 @@ def main(args):
     start = timer()
     logger.debug("loading and preparing data...")
     sdf_edges = spark.read.csv(fname_edges, sep=' ', schema="source BIGINT, target BIGINT")
-    logger.debug("sdf_edges.count(): {}".format(sdf_edges.count()))
+    # logger.debug("sdf_edges.count(): {}".format(sdf_edges.count()))
 
     df_vertices = pd.read_csv(fname_vertices, sep=' ', quotechar='"', names=['id', 'node_name'], dtype={'id': int, 'node_name': str})
     nodename_to_id = df_vertices.set_index('node_name')['id'].to_dict()
@@ -95,11 +95,12 @@ def main(args):
 
     start = timer()
     # logger.debug("running infomap on within-cluster links, for {} top-level clusters...".format(df_tree.cl_top.nunique()))
-    global cl_top
-    cl_top = df_tree.set_index('id')['cl_top']
-    x = sdf_edges.rdd.map(lambda x: (same_source_and_target(x), x.source, x.target)).filter(lambda x: x[0] is not None)
-    sdf_x = x.toDF(['cl_top', 'source', 'target'])
-    logger.debug("sdf_x.count(): {}".format(sdf_x.count()))
+    # global cl_top
+    # cl_top = df_tree.set_index('id')['cl_top']
+    # x = sdf_edges.rdd.map(lambda x: (same_source_and_target(x), x.source, x.target)).filter(lambda x: x[0] is not None)
+    # sdf_x = x.toDF(['cl_top', 'source', 'target'])
+    # logger.debug("sdf_x.count(): {}".format(sdf_x.count()))
+
     # sdf_infomap = sdf_x.groupby('cl_top').apply(calc_infomap_udf)
     # sdf_infomap.write.csv(args.out, sep='\t', header=True, compression='gzip')
     # logger.debug("done running infomap and writing to files. took {}".format(format_timespan(timer()-start)))
@@ -107,8 +108,18 @@ def main(args):
     # logger.debug("writing {} subcluster edgelists to {}".format(df_tree.cl_top.nunique(), args.out))
     # sdf_x.write.partitionBy('cl_top').csv(args.out, sep='\t', header=True, compression='gzip')
 
+    sdf_cl_top = spark.createDataFrame(df_tree[['id', 'cl_top']], schema='id LONG, cl_top STRING')
+    x = sdf_edges.join(sdf_cl_top, on=sdf_edges['source']==sdf_cl_top['id'], how='inner')  \
+                    .drop('id').withColumnRenamed('cl_top', 'cl_top_source')
+    x = x.join(sdf_cl_top, on=x['target']==sdf_cl_top['id'], how='inner')  \
+                    .drop('id').withColumnRenamed('cl_top', 'cl_top_target')
+    x = x.filter(x['cl_top_source']==x['cl_top_target'])
+    logger.debug("x.count(): {}".format(x.count()))
+
     logger.debug("writing to {}".format(args.out))
-    sdf_x.write.csv(args.out, sep='\t', header=True, compression='gzip')
+    # sdf_x.write.csv(args.out, sep='\t', header=True, compression='gzip')
+    x = x.drop('cl_top_target').withColumnRenamed('cl_top_source', 'cl_top')
+    x.write.csv(args.out, sep='\t', header=True, compression='gzip')
     logger.debug("done. took {}".format(format_timespan(timer()-start)))
 
 if __name__ == "__main__":
