@@ -12,7 +12,7 @@ def load_table(dirname, names=None, ext='csv', sep=','):
     fname = g[0]
     return pd.read_csv(fname, sep=sep, header=None, names=names)
 
-def load_spark_session(appName="sparkApp", mem='80g', showConsoleProgress=False, additional_conf=[]):
+def load_spark_session(appName="sparkApp", mem='80g', showConsoleProgress=False, additional_conf=[], logLevel=None):
     from dotenv import load_dotenv
     load_dotenv('.env')
 
@@ -29,5 +29,7 @@ def load_spark_session(appName="sparkApp", mem='80g', showConsoleProgress=False,
         conf.set(k, v)
 
     sc = pyspark.SparkContext(appName=appName, conf=conf)
+    if logLevel:
+        sc.setLogLevel(logLevel)
     spark = pyspark.sql.SparkSession(sc)
     return spark
