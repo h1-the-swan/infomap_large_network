@@ -29,9 +29,11 @@ def same_source_and_target(r):
         return cl_source
     return None
 
-def calc_infomap(links):
+def calc_infomap(nodes, links):
     this_infomap = infomap.Infomap('-t --seed 999 --silent')
     network = this_infomap.network()
+    for node in nodes:
+        network.addNode(int(node))
     for source, target in links:
         network.addLink(int(source), int(target))
     this_infomap.run()
@@ -42,13 +44,18 @@ def calc_infomap(links):
             data.append((node.physicalId, path))
     return data
 
+@pandas_udf('string', PandasUDFType.SCALAR)
+def get_cl_top(v):
+    return v.apply(lambda x: x[:x.find(':')])
+
 @pandas_udf("cl_top string, node_id long, hierInfomap_cl string", PandasUDFType.GROUPED_MAP)
 def calc_infomap_udf(pdf):
     cl_top = pdf['cl_top'].iloc[0]
     # links = [(int(row.source), int(row.target)) for _, row in pdf.iterrows()]
-    links = pdf[['source', 'target']].to_records(index=False)
+    nodes = pdf['node_id'].unique()
+    links = pdf[['source', 'target']].dropna().to_records(index=False)
     try:
-        infomap_result = calc_infomap(links)
+        infomap_result = calc_infomap(nodes, links)
     except RuntimeError:
         nodes = set.union(set(pdf.source.values), set(pdf.target.values))
         infomap_result = [(x, 'INFOMAP_FAILED') for x in nodes]
@@ -62,6 +69,7 @@ def main(args):
     if os.path.exists(args.out):
         raise RuntimeError('output path already exists! ({})'.format(args.out))
 
+
     pjk_fname = os.path.abspath(args.pjk_file)
     fname_vertices = "{}_vertices.txt".format(os.path.splitext(pjk_fname)[0])
     fname_edges = "{}_edges.txt".format(os.path.splitext(pjk_fname)[0])
@@ -73,66 +81,38 @@ def main(args):
         split_pajek(pjk_fname)
         logger.debug("done. took {}".format(format_timespan(timer()-start)))
 
-    start = timer()
-    logger.debug("loading and preparing data...")
-    sdf_edges = spark.read.csv(fname_edges, sep=' ', schema="source BIGINT, target BIGINT")
-    # logger.debug("sdf_edges.count(): {}".format(sdf_edges.count()))
-
-    df_vertices = pd.read_csv(fname_vertices, sep=' ', quotechar='"', names=['id', 'node_name'], dtype={'id': int, 'node_name': str})
-    nodename_to_id = df_vertices.set_index('node_name')['id'].to_dict()
-    df_tree = pd.read_csv(args.tree_fname, sep=' ', comment='#', quotechar='"', names=['cl', 'flow', 'node_name'], dtype={'node_name': str})
-    df_tree['id'] = df_tree.node_name.map(nodename_to_id)
-    df_tree['cl_top'] = df_tree.cl.apply(lambda x: x[:x.find(':')])
-    logger.debug("done. took {}".format(format_timespan(timer()-start)))
-
-    start = timer()
+    sdf_vertices = spark.read.csv(fname_vertices, sep=' ', quote='"', schema='node_id LONG, node_name STRING')
+    sdf_tree = spark.read.csv(args.tree_fname, sep=' ', quote='"', comment='#', schema='cl STRING, flow FLOAT, node_name STRING')
+    sdf_tree = sdf_tree.withColumn('cl_top', get_cl_top(sdf_tree['cl']))
     threshold = args.min_size
     logger.debug("excluding clusters smaller than {}...".format(threshold))
-    vc_cl_top = df_tree.cl_top.value_counts()
-    cl_to_keep = vc_cl_top[vc_cl_top>=threshold].index
-    df_tree = df_tree[df_tree.cl_top.isin(cl_to_keep)]
-
+    to_keep = sdf_tree.groupby('cl_top').count().filter('`count` >= {}'.format(threshold))
     if args.max_size:
         logger.debug("excluding clusters larger than {}...".format(args.max_size))
-        cl_to_keep = vc_cl_top[vc_cl_top<=args.max_size].index
-        df_tree = df_tree[df_tree.cl_top.isin(cl_to_keep)]
-    logger.debug("done. took {}".format(format_timespan(timer()-start)))
+        to_keep = to_keep.filter('`count` <= {}'.format(args.max_size))
+    sdf_tree = sdf_tree.join(to_keep.select('cl_top'), on='cl_top', how='inner')
+    sdf_tree = sdf_tree.join(sdf_vertices, on='node_name', how='inner')
+    sdf_cl_top = sdf_tree.select(['node_id', 'cl_top'])
 
-    start = timer()
-    # logger.debug("running infomap on within-cluster links, for {} top-level clusters...".format(df_tree.cl_top.nunique()))
-    # global cl_top
-    # cl_top = df_tree.set_index('id')['cl_top']
-    # x = sdf_edges.rdd.map(lambda x: (same_source_and_target(x), x.source, x.target)).filter(lambda x: x[0] is not None)
-    # sdf_x = x.toDF(['cl_top', 'source', 'target'])
-    # logger.debug("sdf_x.count(): {}".format(sdf_x.count()))
+    sdf_edges = spark.read.csv(fname_edges, sep=' ', schema="source BIGINT, target BIGINT")
 
-    # sdf_infomap = sdf_x.groupby('cl_top').apply(calc_infomap_udf)
-    # sdf_infomap.write.csv(args.out, sep='\t', header=True, compression='gzip')
-    # logger.debug("done running infomap and writing to files. took {}".format(format_timespan(timer()-start)))
-
-    # logger.debug("writing {} subcluster edgelists to {}".format(df_tree.cl_top.nunique(), args.out))
-    # sdf_x.write.partitionBy('cl_top').csv(args.out, sep='\t', header=True, compression='gzip')
-
-    sdf_cl_top = spark.createDataFrame(df_tree[['id', 'cl_top']], schema='id LONG, cl_top STRING')
-    x = sdf_edges.join(sdf_cl_top, on=sdf_edges['source']==sdf_cl_top['id'], how='inner')  \
-                    .drop('id').withColumnRenamed('cl_top', 'cl_top_source')
-    x = x.join(sdf_cl_top, on=x['target']==sdf_cl_top['id'], how='inner')  \
-                    .drop('id').withColumnRenamed('cl_top', 'cl_top_target')
+    x = sdf_edges.join(sdf_cl_top, on=sdf_edges['source']==sdf_cl_top['node_id'], how='inner')  \
+                    .drop('node_id').withColumnRenamed('cl_top', 'cl_top_source')
+    x = x.join(sdf_cl_top, on=x['target']==sdf_cl_top['node_id'], how='inner')  \
+                    .drop('node_id').withColumnRenamed('cl_top', 'cl_top_target')
     x = x.filter(x['cl_top_source']==x['cl_top_target'])
     # logger.debug("x.count(): {}".format(x.count()))
 
     x = x.drop('cl_top_target').withColumnRenamed('cl_top_source', 'cl_top')
 
-    # x.write.csv(args.out, sep='\t', header=True, compression='gzip')
+    x = x.withColumnRenamed('cl_top', '_cl_top').join(sdf_tree.select(['node_id', 'cl_top']), on=x['source']==sdf_tree['node_id'], how='outer')
+    x = x.drop('_cl_top')
 
-    # logger.debug("writing {} subcluster edgelists to {}".format(df_tree.cl_top.nunique(), args.out))
-    # x.write.partitionBy('cl_top').csv(args.out, sep='\t', header=True, compression='gzip')
-    # logger.debug("done. took {}".format(format_timespan(timer()-start)))
 
-    logger.debug("running infomap on within-cluster links, for {} top-level clusters...".format(df_tree.cl_top.nunique()))
+    # logger.debug("running infomap on within-cluster links, for {} top-level clusters...".format(df_tree.cl_top.nunique()))
     sdf_infomap = x.groupby('cl_top').apply(calc_infomap_udf)
     sdf_infomap.write.csv(args.out, sep='\t', header=True, compression='gzip')
-    logger.debug("done running infomap and writing to files. took {}".format(format_timespan(timer()-start)))
+    # logger.debug("done running infomap and writing to files. took {}".format(format_timespan(timer()-start)))
 
 if __name__ == "__main__":
     total_start = timer()
