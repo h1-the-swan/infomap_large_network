@@ -30,10 +30,10 @@ def same_source_and_target(r):
     return None
 
 def calc_infomap(links):
-    this_infomap = infomap.Infomap('-t --seed 999')
+    this_infomap = infomap.Infomap('-t --seed 999 --silent')
     network = this_infomap.network()
     for source, target in links:
-        network.addLink(source, target)
+        network.addLink(int(source), int(target))
     this_infomap.run()
     data = []
     for node in this_infomap.iterTree():
@@ -45,8 +45,13 @@ def calc_infomap(links):
 @pandas_udf("cl_top string, node_id long, hierInfomap_cl string", PandasUDFType.GROUPED_MAP)
 def calc_infomap_udf(pdf):
     cl_top = pdf['cl_top'].iloc[0]
-    links = [(int(row.source), int(row.target)) for _, row in pdf.iterrows()]
-    infomap_result = calc_infomap(links)
+    # links = [(int(row.source), int(row.target)) for _, row in pdf.iterrows()]
+    links = pdf[['source', 'target']].to_records(index=False)
+    try:
+        infomap_result = calc_infomap(links)
+    except RuntimeError:
+        nodes = set.union(set(pdf.source.values), set(pdf.target.values))
+        infomap_result = [(x, 'INFOMAP_FAILED') for x in nodes]
     return_df = pd.DataFrame(infomap_result, columns=['node_id', 'hierInfomap_cl'])
     return_df['cl_top'] = cl_top
     return return_df
@@ -114,13 +119,20 @@ def main(args):
     x = x.join(sdf_cl_top, on=x['target']==sdf_cl_top['id'], how='inner')  \
                     .drop('id').withColumnRenamed('cl_top', 'cl_top_target')
     x = x.filter(x['cl_top_source']==x['cl_top_target'])
-    logger.debug("x.count(): {}".format(x.count()))
+    # logger.debug("x.count(): {}".format(x.count()))
 
-    logger.debug("writing to {}".format(args.out))
-    # sdf_x.write.csv(args.out, sep='\t', header=True, compression='gzip')
     x = x.drop('cl_top_target').withColumnRenamed('cl_top_source', 'cl_top')
-    x.write.csv(args.out, sep='\t', header=True, compression='gzip')
-    logger.debug("done. took {}".format(format_timespan(timer()-start)))
+
+    # x.write.csv(args.out, sep='\t', header=True, compression='gzip')
+
+    # logger.debug("writing {} subcluster edgelists to {}".format(df_tree.cl_top.nunique(), args.out))
+    # x.write.partitionBy('cl_top').csv(args.out, sep='\t', header=True, compression='gzip')
+    # logger.debug("done. took {}".format(format_timespan(timer()-start)))
+
+    logger.debug("running infomap on within-cluster links, for {} top-level clusters...".format(df_tree.cl_top.nunique()))
+    sdf_infomap = x.groupby('cl_top').apply(calc_infomap_udf)
+    sdf_infomap.write.csv(args.out, sep='\t', header=True, compression='gzip')
+    logger.debug("done running infomap and writing to files. took {}".format(format_timespan(timer()-start)))
 
 if __name__ == "__main__":
     total_start = timer()
