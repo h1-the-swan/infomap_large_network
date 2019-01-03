@@ -3,3 +3,10 @@ For very large networks (on the scale of ~1 billion edges), Infomap clustering d
 2018-12-23
 tests with `jstor.net`
 `nohup ~/code/RelaxMap/ompRelaxmap 999 ~/code/infomap_large_network/data/jstor.net 18 1 1e-4 0.0 10 ~/code/infomap_large_network/data/ prior >& relaxmap_jstor_run_20181223.log &`
+
+
+2019-01-02
+MySQL:
+>> LOAD DATA LOCAL INFILE 'data/wos_hierInfomap_tree_coltrim_tsv_20190102/part-00000-5aa860f2-6f22-4d06-93a7-ae6623973d0a-c000.csv' INTO TABLE `wos`.`tree_rank_multilevel` IGNORE 1 LINES;
+Query OK, 146151683 rows affected (1 hour 13 min 25.20 sec)
+Records: 146151683  Deleted: 0  Skipped: 0  Warnings: 0

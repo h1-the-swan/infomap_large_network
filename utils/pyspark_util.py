@@ -24,6 +24,8 @@ def load_spark_session(appName="sparkApp", mem='80g', showConsoleProgress=False,
         ('spark.executor.memory', mem), 
         ('spark.driver.memory', mem),
         ('spark.ui.showConsoleProgress', showConsoleProgress),
+        ('spark.driver.maxResultSize', '0'),
+        ('spark.reducer.maxSizeInFlight', '5g'),
     ])
     for k,v in additional_conf:
         conf.set(k, v)

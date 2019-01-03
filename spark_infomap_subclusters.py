@@ -44,10 +44,6 @@ def calc_infomap(nodes, links):
             data.append((node.physicalId, path))
     return data
 
-@pandas_udf('string', PandasUDFType.SCALAR)
-def get_cl_top(v):
-    return v.apply(lambda x: x[:x.find(':')])
-
 @pandas_udf("cl_top string, node_id long, hierInfomap_cl string", PandasUDFType.GROUPED_MAP)
 def calc_infomap_udf(pdf):
     cl_top = pdf['cl_top'].iloc[0]
@@ -57,11 +53,15 @@ def calc_infomap_udf(pdf):
     try:
         infomap_result = calc_infomap(nodes, links)
     except RuntimeError:
-        nodes = set.union(set(pdf.source.values), set(pdf.target.values))
+        # nodes = set.union(set(pdf.source.values), set(pdf.target.values))
         infomap_result = [(x, 'INFOMAP_FAILED') for x in nodes]
     return_df = pd.DataFrame(infomap_result, columns=['node_id', 'hierInfomap_cl'])
     return_df['cl_top'] = cl_top
     return return_df
+
+@pandas_udf('string', PandasUDFType.SCALAR)
+def get_cl_top(v):
+    return v.apply(lambda x: x[:x.find(':')])
 
 
 def main(args):
