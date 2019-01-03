@@ -33,7 +33,8 @@ def calc_infomap(nodes, links):
     this_infomap = infomap.Infomap('-t --seed 999 --silent')
     network = this_infomap.network()
     for node in nodes:
-        network.addNode(int(node))
+        _node = network.addNode(int(node))
+        _node.disown()  # this seems to prevent an error message being sent out for every node
     for source, target in links:
         network.addLink(int(source), int(target))
     this_infomap.run()
