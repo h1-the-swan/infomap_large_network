@@ -45,7 +45,13 @@ def calc_infomap(nodes, links):
             data.append((node.physicalId, path))
     return data
 
-@pandas_udf("cl_top string, node_id long, hierInfomap_cl string", PandasUDFType.GROUPED_MAP)
+def get_combined_infomap_cl_path(row):
+    if pd.isna(row['hierInfomap_cl']):
+        return row['cl']
+    else:
+        return "{}:{}".format(row['cl_top'], row['hierInfomap_cl'])
+
+@pandas_udf("cl_top string, node_id long, node_name string, hierInfomap_cl string, cl_combined string", PandasUDFType.GROUPED_MAP)
 def calc_infomap_udf(pdf):
     cl_top = pdf['cl_top'].iloc[0]
     # links = [(int(row.source), int(row.target)) for _, row in pdf.iterrows()]
@@ -57,7 +63,9 @@ def calc_infomap_udf(pdf):
         # nodes = set.union(set(pdf.source.values), set(pdf.target.values))
         infomap_result = [(x, 'INFOMAP_FAILED') for x in nodes]
     return_df = pd.DataFrame(infomap_result, columns=['node_id', 'hierInfomap_cl'])
+    return_df = return_df.join(pdf.set_index('node_id')['node_name'], on='node_id', how='left')
     return_df['cl_top'] = cl_top
+    return_df['cl_combined'] = return_df.apply(get_combined_infomap_cl_path, axis=1)
     return return_df
 
 @pandas_udf('string', PandasUDFType.SCALAR)
@@ -106,13 +114,17 @@ def main(args):
 
     x = x.drop('cl_top_target').withColumnRenamed('cl_top_source', 'cl_top')
 
-    x = x.withColumnRenamed('cl_top', '_cl_top').join(sdf_tree.select(['node_id', 'cl_top']), on=x['source']==sdf_tree['node_id'], how='outer')
+    # There may still be some nodes in this cluster that are not represented, 
+    # since they don't have any within-cluster links.
+    # This next step will include these missing nodes as rows with null values.
+    x = x.withColumnRenamed('cl_top', '_cl_top').join(sdf_tree, on=x['source']==sdf_tree['node_id'], how='outer')
     x = x.drop('_cl_top')
 
 
     # logger.debug("running infomap on within-cluster links, for {} top-level clusters...".format(df_tree.cl_top.nunique()))
     sdf_infomap = x.groupby('cl_top').apply(calc_infomap_udf)
-    sdf_infomap.write.csv(args.out, sep='\t', header=True, compression='gzip')
+    # sdf_infomap.write.csv(args.out, sep='\t', header=True, compression='gzip')
+    sdf_infomap.coalesce(1).write.csv(args.out, sep='\t', header=True)
     # logger.debug("done running infomap and writing to files. took {}".format(format_timespan(timer()-start)))
 
 if __name__ == "__main__":
