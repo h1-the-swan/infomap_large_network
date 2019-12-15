@@ -1,4 +1,5 @@
-import sys, os, time
+import sys, os, time, tempfile, shutil
+from glob import glob
 from datetime import datetime
 from timeit import default_timer as timer
 try:
@@ -46,12 +47,9 @@ def calc_infomap(nodes, links):
     return data
 
 def get_combined_infomap_cl_path(row):
-    if pd.isna(row['hierInfomap_cl']):
-        return row['cl']
-    else:
-        return "{}:{}".format(row['cl_top'], row['hierInfomap_cl'])
+    return "{}:{}".format(row['cl_top'], row['hierInfomap_cl'])
 
-@pandas_udf("cl_top string, node_id long, node_name string, hierInfomap_cl string, cl_combined string", PandasUDFType.GROUPED_MAP)
+@pandas_udf("node_id bigint, node_name string, cl string, cl_top string", PandasUDFType.GROUPED_MAP)
 def calc_infomap_udf(pdf):
     cl_top = pdf['cl_top'].iloc[0]
     # links = [(int(row.source), int(row.target)) for _, row in pdf.iterrows()]
@@ -63,9 +61,10 @@ def calc_infomap_udf(pdf):
         # nodes = set.union(set(pdf.source.values), set(pdf.target.values))
         infomap_result = [(x, 'INFOMAP_FAILED') for x in nodes]
     return_df = pd.DataFrame(infomap_result, columns=['node_id', 'hierInfomap_cl'])
-    return_df = return_df.join(pdf.set_index('node_id')['node_name'], on='node_id', how='left')
+    return_df = return_df.join(pdf.set_index('node_id')['node_name'].drop_duplicates(), on='node_id', how='left')
     return_df['cl_top'] = cl_top
-    return_df['cl_combined'] = return_df.apply(get_combined_infomap_cl_path, axis=1)
+    return_df['cl'] = return_df.apply(get_combined_infomap_cl_path, axis=1)
+    return_df = return_df.drop(columns='hierInfomap_cl')
     return return_df
 
 @pandas_udf('string', PandasUDFType.SCALAR)
@@ -74,7 +73,7 @@ def get_cl_top(v):
 
 
 def main(args):
-    # check if output directory already exists
+    # check if output path already exists
     if os.path.exists(args.out):
         raise RuntimeError('output path already exists! ({})'.format(args.out))
 
@@ -93,15 +92,17 @@ def main(args):
     sdf_vertices = spark.read.csv(fname_vertices, sep=' ', quote='"', schema='node_id LONG, node_name STRING')
     sdf_tree = spark.read.csv(args.tree_fname, sep=' ', quote='"', comment='#', schema='cl STRING, flow FLOAT, node_name STRING')
     sdf_tree = sdf_tree.withColumn('cl_top', get_cl_top(sdf_tree['cl']))
+    # get `node_id` column
+    sdf_tree = sdf_tree.join(sdf_vertices, on='node_name', how='inner')
+
     threshold = args.min_size
     logger.debug("excluding clusters smaller than {}...".format(threshold))
     to_keep = sdf_tree.groupby('cl_top').count().filter('`count` >= {}'.format(threshold))
     if args.max_size:
         logger.debug("excluding clusters larger than {}...".format(args.max_size))
         to_keep = to_keep.filter('`count` <= {}'.format(args.max_size))
-    sdf_tree = sdf_tree.join(to_keep.select('cl_top'), on='cl_top', how='inner')
-    sdf_tree = sdf_tree.join(sdf_vertices, on='node_name', how='inner')
-    sdf_cl_top = sdf_tree.select(['node_id', 'cl_top'])
+    sdf_tree_subset = sdf_tree.join(to_keep.select('cl_top'), on='cl_top', how='inner')
+    sdf_cl_top = sdf_tree_subset.select(['node_id', 'cl_top'])
 
     sdf_edges = spark.read.csv(fname_edges, sep=' ', schema="source BIGINT, target BIGINT")
 
@@ -117,14 +118,31 @@ def main(args):
     # There may still be some nodes in this cluster that are not represented, 
     # since they don't have any within-cluster links.
     # This next step will include these missing nodes as rows with null values.
-    x = x.withColumnRenamed('cl_top', '_cl_top').join(sdf_tree, on=x['source']==sdf_tree['node_id'], how='outer')
+    x = x.withColumnRenamed('cl_top', '_cl_top').join(sdf_tree_subset, on=x['source']==sdf_tree_subset['node_id'], how='outer')
     x = x.drop('_cl_top')
 
 
     # logger.debug("running infomap on within-cluster links, for {} top-level clusters...".format(df_tree.cl_top.nunique()))
     sdf_infomap = x.groupby('cl_top').apply(calc_infomap_udf)
+
+    # get `flow` column
+    sdf_infomap = sdf_infomap.join(sdf_tree_subset.select(['node_id', 'flow']), on='node_id', how='left')
+
+    # get the nodes in small clusters we excluded before. just use their original `cl` column for their cluster designation
+    small_clusters = sdf_tree.join(sdf_tree_subset, on='node_id', how='left_anti')
+    # at this point `sdf_infomap` and `small_clusters` should have the same schema
+    # sdf_infomap = sdf_infomap.join(small_clusters, on=sdf_infomap.columns, how='outer')
+    # reorder columns to match
+    small_clusters = small_clusters.select(sdf_infomap.columns)
+    # concatenate
+    sdf_infomap = sdf_infomap.union(small_clusters)
+
+    sdf_infomap = sdf_infomap.orderBy('node_id')
     # sdf_infomap.write.csv(args.out, sep='\t', header=True, compression='gzip')
-    sdf_infomap.coalesce(1).write.csv(args.out, sep='\t', header=True)
+    with tempfile.TemporaryDirectory() as dirpath:
+        sdf_infomap.coalesce(1).write.csv(dirpath, sep='\t', header=True, mode='overwrite')
+        temp_fname = glob(os.path.join(dirpath, '*.csv'))[0]
+        shutil.move(temp_fname, args.out)
     # logger.debug("done running infomap and writing to files. took {}".format(format_timespan(timer()-start)))
 
 if __name__ == "__main__":
@@ -136,7 +154,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="run hierarchical infomap separately on relaxmap clusters, using spark")
     parser.add_argument("pjk_file", help="pajek (.net) file for the full network")
     parser.add_argument("tree_fname", help="treefile from relaxmap")
-    parser.add_argument("-o", "--out", required=True, help="outdirectory for spark csv (tab-separated) (required)")
+    parser.add_argument("-o", "--out", required=True, help="output filename (TSV) (required)")
     parser.add_argument("--min-size", type=int, default=10, help="ignore clusters smaller than this size (don't run infomap)")
     parser.add_argument("--max-size", type=int, help="ignore clusters larger than this size (don't run infomap)")
     parser.add_argument("--debug", action='store_true', help="output debugging info")
