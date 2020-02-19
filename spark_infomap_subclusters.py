@@ -17,11 +17,17 @@ logger = logging.getLogger('__main__').getChild(__name__)
 
 import pandas as pd
 from utils import split_pajek
-from utils import load_spark_session
+# from utils import load_spark_session
+from config import Config
+config = Config()
+spark = config.load_spark_session(mem='100g', additional_conf=[("spark.sql.execution.arrow.enabled", 'true')])
+# https://stackoverflow.com/questions/58273063/pandasudf-and-pyarrow-0-15-0
+# os.environ['ARROW_PRE_0_15_IPC_FORMAT'] = "1"
+# actually, set this in .env file
 import infomap
 from pyspark.sql.functions import pandas_udf, PandasUDFType
 
-spark = load_spark_session(logLevel='INFO', additional_conf=[('spark.logConf', True), ('spark.driver.maxResultSize', '0'), ('spark.python.profile', True), ('spark.reducer.maxSizeInFlight', '5g'), ('spark.driver.supervise', True)])
+# spark = load_spark_session(logLevel='INFO', additional_conf=[('spark.logConf', True), ('spark.driver.maxResultSize', '0'), ('spark.python.profile', True), ('spark.reducer.maxSizeInFlight', '5g'), ('spark.driver.supervise', True)])
 
 def same_source_and_target(r):
     cl_source = cl_top.get(r.source)
