@@ -15,11 +15,10 @@ logging.basicConfig(format='%(asctime)s %(name)s.%(lineno)d %(levelname)s : %(me
 # logger = logging.getLogger(__name__)
 logger = logging.getLogger('__main__').getChild(__name__)
 
-from h1theswan_utils.network_data import PajekFactory
-
 INFOMAP_PATH = '/home/jporteno/code/infomap/Infomap'
 
 def create_pajek_from_dataframe(df, column_names=['Paper_ID', 'Paper_reference_ID']):
+    from h1theswan_utils.network_data import PajekFactory
     pjk = PajekFactory()
     for _, row in df.iterrows():
         pjk.add_edge(row[column_names[0]], row[column_names[1]])
