@@ -22,9 +22,11 @@ logging.basicConfig(
 logger = logging.getLogger("__main__").getChild(__name__)
 
 import pandas as pd
-from utils import split_pajek
+
+# from utils import split_pajek
 
 from dotenv import load_dotenv, find_dotenv
+
 load_dotenv(find_dotenv())
 
 # from utils import load_spark_session
@@ -59,6 +61,32 @@ from pyspark.sql.functions import pandas_udf, PandasUDFType
 #     if cl_source and cl_target and cl_source == cl_target:
 #         return cl_source
 #     return None
+
+
+def split_pajek(pjk_fname):
+    pjk_fname = os.path.abspath(pjk_fname)
+    outfname_vertices = "{}_vertices.txt".format(os.path.splitext(pjk_fname)[0])
+    outfname_edges = "{}_edges.txt".format(os.path.splitext(pjk_fname)[0])
+    outf_vertices = open(outfname_vertices, "w")
+    outf_edges = open(outfname_edges, "w")
+    with open(pjk_fname, "r") as f:
+        mode = ""
+        for line in f:
+            if line:
+                if line[0] == "*":
+                    if line.lower().startswith("*v"):
+                        mode = "v"
+                    else:
+                        mode = "e"
+                    continue
+
+                if mode == "v":
+                    outf_vertices.write(line)
+                if mode == "e":
+                    outf_edges.write(line)
+
+    outf_vertices.close()
+    outf_edges.close()
 
 
 def calc_infomap(nodes, links):

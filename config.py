@@ -108,7 +108,7 @@ class Config(object):
             ('spark.ui.showConsoleProgress', showConsoleProgress),
             ('spark.driver.maxResultSize', '0'),
             ('spark.reducer.maxSizeInFlight', '5g'),
-            ("spark.sql.execution.arrow.enabled", "false"),
+            # ("spark.sql.execution.arrow.enabled", "false"),
             ("spark.driver.extraJavaOptions", "-Duser.timezone=UTC"),  # https://stackoverflow.com/a/48767250
             ("spark.executor.extraJavaOptions", "-Duser.timezone=UTC"),
         ])

@@ -6,3 +6,4 @@ data/
 *.ipynb
 *.log
 tmp/
+.vscode/settings.json
