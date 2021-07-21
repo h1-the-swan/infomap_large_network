@@ -25,9 +25,9 @@ import pandas as pd
 
 # from utils import split_pajek
 
-from dotenv import load_dotenv, find_dotenv
+# from dotenv import load_dotenv, find_dotenv
 
-load_dotenv(find_dotenv())
+# load_dotenv(find_dotenv())
 
 # from utils import load_spark_session
 # from config import Config
@@ -44,6 +44,13 @@ from pyspark.sql import SparkSession
 mem = "100g"
 spark = (
     SparkSession.builder.appName("sparkApp")
+    # .config("spark.sql.legacy.setCommandRejectsSparkCoreConfs","false")
+    # .config(
+    #     "spark.driver.extraJavaOptions", "-Dio.netty.tryReflectionSetAccessible=true"
+    # )
+    # .config(
+    #     "spark.executor.extraJavaOptions", "-Dio.netty.tryReflectionSetAccessible=true"
+    # )
     .config("spark.executor.memory", mem)
     .config("spark.driver.memory", mem)
     .config("spark.sql.execution.arrow.pyspark.enabled", "true")
@@ -142,6 +149,7 @@ def get_cl_top(v):
 
 
 def main(args):
+    logger.debug(f"SPARK_SUBMIT_OPTS: {os.environ.get('SPARK_SUBMIT_OPTS')}")
     # check if output path already exists
     if os.path.exists(args.out):
         raise RuntimeError("output path already exists! ({})".format(args.out))

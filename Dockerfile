@@ -2,10 +2,16 @@ FROM ubuntu:20.04
 
 RUN mkdir /RelaxMap
 
+# ENV SPARK_SUBMIT_OPTS="--illegal-access=permit -Dio.netty.tryReflectionSetAccessible=true"
+# ENV SPARK_SUBMIT_OPTS="-Dio.netty.tryReflectionSetAccessible=true"
+# ENV SPARK_MASTER_OPTS="-Dio.netty.tryReflectionSetAccessible=true"
+# ENV SPARK_EXECUTOR_OPTS="-Dio.netty.tryReflectionSetAccessible=true"
+
+
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -yq \
     libgomp1 \
     python3-pip \
-    default-jdk \
+    openjdk-8-jdk \
   && apt-get clean \
   && rm -rf /var/lib/apt/lists/*
 
