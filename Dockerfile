@@ -25,6 +25,8 @@ COPY spark_infomap_subclusters.py .
 
 VOLUME /data
 
+ENV CACHE_DIR="/data/cache"
+
 # ENTRYPOINT [ "/RelaxMap/ompRelaxmap" ]
 ENTRYPOINT [ "python3", "spark_infomap_subclusters.py" ]
 CMD [ "--help" ]

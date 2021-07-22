@@ -1,7 +1,9 @@
 import sys, os, time, tempfile, shutil
+from pathlib import Path
 from glob import glob
 from datetime import datetime
 from timeit import default_timer as timer
+from typing import Tuple
 
 try:
     from humanfriendly import format_timespan
@@ -70,13 +72,25 @@ from pyspark.sql.functions import pandas_udf, PandasUDFType
 #     return None
 
 
-def split_pajek(pjk_fname):
-    pjk_fname = os.path.abspath(pjk_fname)
-    outfname_vertices = "{}_vertices.txt".format(os.path.splitext(pjk_fname)[0])
-    outfname_edges = "{}_edges.txt".format(os.path.splitext(pjk_fname)[0])
-    outf_vertices = open(outfname_vertices, "w")
-    outf_edges = open(outfname_edges, "w")
-    with open(pjk_fname, "r") as f:
+def split_pajek(pjk_fname: str) -> Tuple[Path]:
+    pjk_fpath = Path(pjk_fname)
+    cache_dir = os.environ.get("CACHE_DIR") or pjk_fpath.parent
+    cache_dir = Path(cache_dir)
+    if not cache_dir.exists():
+        logger.debug("Creating cache directory: {}".format(cache_dir))
+        cache_dir.mkdir()
+    outfpath_vertices = cache_dir.joinpath("{}_vertices.txt".format(pjk_fpath.stem))
+    outfpath_edges = cache_dir.joinpath("{}_edges.txt".format(pjk_fpath.stem))
+    if outfpath_vertices.exists() and outfpath_edges.exists():
+        logger.debug(
+            "pajek split files {} and {} already exist. using these.".format(
+                outfpath_vertices, outfpath_edges
+            )
+        )
+        return outfpath_vertices, outfpath_edges
+    outf_vertices = outfpath_vertices.open("w")
+    outf_edges = outfpath_edges.open("w")
+    with pjk_fpath.open("r") as f:
         mode = ""
         for line in f:
             if line:
@@ -94,6 +108,7 @@ def split_pajek(pjk_fname):
 
     outf_vertices.close()
     outf_edges.close()
+    return outfpath_vertices, outfpath_edges
 
 
 def calc_infomap(nodes, links):
@@ -149,32 +164,16 @@ def get_cl_top(v):
 
 
 def main(args):
-    logger.debug(f"SPARK_SUBMIT_OPTS: {os.environ.get('SPARK_SUBMIT_OPTS')}")
     # check if output path already exists
     if os.path.exists(args.out):
         raise RuntimeError("output path already exists! ({})".format(args.out))
 
     pjk_fname = os.path.abspath(args.pjk_file)
-    fname_vertices = "{}_vertices.txt".format(os.path.splitext(pjk_fname)[0])
-    fname_edges = "{}_edges.txt".format(os.path.splitext(pjk_fname)[0])
-    if os.path.exists(fname_vertices) and os.path.exists(fname_edges):
-        logger.debug(
-            "pajek split files {} and {} already exist. using these.".format(
-                fname_vertices, fname_edges
-            )
-        )
-    else:
-        start = timer()
-        logger.debug(
-            "splitting pajek file {} into {} and {}".format(
-                pjk_fname, fname_vertices, fname_edges
-            )
-        )
-        split_pajek(pjk_fname)
-        logger.debug("done. took {}".format(format_timespan(timer() - start)))
+    logger.debug("splitting input pajek file into vertices and edges files...")
+    fpath_vertices, fpath_edges = split_pajek(pjk_fname)
 
     sdf_vertices = spark.read.csv(
-        fname_vertices, sep=" ", quote='"', schema="node_id LONG, node_name STRING"
+        str(fpath_vertices), sep=" ", quote='"', schema="node_id LONG, node_name STRING"
     )
     sdf_tree = spark.read.csv(
         args.tree_fname,
@@ -199,7 +198,7 @@ def main(args):
     sdf_cl_top = sdf_tree_subset.select(["node_id", "cl_top"])
 
     sdf_edges = spark.read.csv(
-        fname_edges, sep=" ", schema="source BIGINT, target BIGINT"
+        str(fpath_edges), sep=" ", schema="source BIGINT, target BIGINT"
     )
 
     x = (
