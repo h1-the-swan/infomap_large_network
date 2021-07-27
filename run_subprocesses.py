@@ -22,6 +22,11 @@ root_logger = logging.getLogger()
 logger = root_logger.getChild(__name__)
 
 
+# This is the path to the RelaxMap executable if running in Docker.
+# Change if you want to use a different RelaxMap executable.
+RELAXMAP_EXECUTABLE = "/RelaxMap/ompRelaxmap"
+
+
 def subprocess_relaxmap(
     fpath: Union[str, Path], outfp: Union[str, Path], processes: int
 ) -> subprocess.CompletedProcess:
@@ -43,12 +48,39 @@ def subprocess_relaxmap(
     return p
 
 
+def subprocess_infomap_subclusters(
+    fpath_net, fpath_tree, outfp, min_size=None, max_size=None
+) -> subprocess.CompletedProcess:
+    sp_args = [
+        "python3",
+        "spark_infomap_subclusters.py",
+        str(fpath_net),
+        str(fpath_tree),
+        "-o",
+        str(outfp),
+    ]
+    if min_size is not None:
+        sp_args.extend(["--min-size", str(min_size)])
+    if max_size is not None:
+        sp_args.extend("--max-size", str(max_size))
+    logger.debug(sp_args)
+    p = subprocess.run(sp_args)
+    return p
+
+
 def main(args):
+    fpath = Path(args.input)
+    outdir = Path(args.output)
     logger.debug("running RelaxMap")
-    logger.debug(f"input: {args.input}")
-    logger.debug(f"output: {args.output}")
+    logger.debug(f"input: {fpath}")
+    logger.debug(f"output: {outdir}")
     logger.debug(f"processes: {args.processes}")
-    p = subprocess_relaxmap(args.input, args.output, args.processes)
+    p = subprocess_relaxmap(fpath, outdir, args.processes)
+    logger.debug(f"done. returncode: {p.returncode}")
+
+    fpath_tree = outdir.joinpath(fpath.stem + ".tree")
+    outfp = outdir.joinpath(fpath.stem + ".tsv")
+    p = subprocess_infomap_subclusters(fpath, fpath_tree, outfp, min_size=args.min_size)
     logger.debug(f"done. returncode: {p.returncode}")
 
 
@@ -73,6 +105,11 @@ if __name__ == "__main__":
     parser.add_argument("output", help="path to output directory")
     parser.add_argument(
         "processes", type=int, help="number of processes to use in parallel"
+    )
+    parser.add_argument(
+        "--min-size",
+        type=int,
+        help="ignore clusters smaller than this size (don't run infomap)",
     )
     parser.add_argument("--debug", action="store_true", help="output debugging info")
     global args
