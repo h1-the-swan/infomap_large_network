@@ -22,11 +22,13 @@ COPY requirements.txt /
 RUN pip3 --no-cache-dir install -r /requirements.txt
 
 COPY spark_infomap_subclusters.py .
+COPY run_subprocesses.py .
 
 VOLUME /data
 
 ENV CACHE_DIR="/data/cache"
 
 # ENTRYPOINT [ "/RelaxMap/ompRelaxmap" ]
-ENTRYPOINT [ "python3", "spark_infomap_subclusters.py" ]
+# ENTRYPOINT [ "python3", "spark_infomap_subclusters.py" ]
+ENTRYPOINT [ "python3", "run_subprocesses.py" ]
 CMD [ "--help" ]
