@@ -1,9 +1,11 @@
 venv*
 *.pyc
 *.env
-data/
 .ipynb_checkpoints/
 *.ipynb
 *.log
 tmp/
 .vscode/settings.json
+
+data/*
+!data/flow.net
